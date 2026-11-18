@@ -113,6 +113,8 @@ def build_cfg(result: RecursiveResult) -> tuple[dict[int, BasicBlock], list[tupl
 
         if last.is_ret:
             continue
+        if last.is_call and last.addr in result.noreturn_calls:
+            continue  # exit()/abort()/... never return: no fallthrough edge
         if last.is_jump and not last.is_conditional:
             if last.addr in result.jump_tables:
                 for t in result.jump_tables[last.addr]:
@@ -141,9 +143,10 @@ def build_function(
     entry: int,
     name: str = "",
     discovered: bool = False,
+    is_noreturn=None,
 ) -> Function:
     """Full function recovery: recursive descent + CFG."""
-    result = dis.recursive(entry, read_va, in_code)
+    result = dis.recursive(entry, read_va, in_code, is_noreturn=is_noreturn)
     blocks, edges = build_cfg(result)
     fn = Function(
         start=entry,

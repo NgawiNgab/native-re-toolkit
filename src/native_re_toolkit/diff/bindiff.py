@@ -113,6 +113,18 @@ def _similarity(a: Function, b: Function) -> float:
     return difflib.SequenceMatcher(None, sa, sb, autojunk=False).ratio()
 
 
+# Tiny functions produce deceptively high mnemonic similarity; require a
+# much stricter ratio to pair them.
+_SMALL_FUNCTION_INSNS = 15
+_SMALL_FUNCTION_THRESHOLD = 0.9
+
+
+def _effective_threshold(a: Function, b: Function, base: float) -> float:
+    if min(a.num_insns, b.num_insns) < _SMALL_FUNCTION_INSNS:
+        return max(base, _SMALL_FUNCTION_THRESHOLD)
+    return base
+
+
 def diff_functions(
     old_funcs: dict[int, Function],
     new_funcs: dict[int, Function],
@@ -141,9 +153,10 @@ def diff_functions(
 
     # 2. match by identical address (same-layout stripped builds)
     for addr in sorted(set(old_unmatched) & set(new_unmatched)):
-        sim = _similarity(old_unmatched[addr], new_unmatched[addr])
+        o_fn, n_fn = old_unmatched[addr], new_unmatched[addr]
+        sim = _similarity(o_fn, n_fn)
         # accept address match only when reasonably similar
-        if sim >= fuzzy_threshold:
+        if sim >= _effective_threshold(o_fn, n_fn, fuzzy_threshold):
             pop_pair(addr, addr, "address", sim)
 
     # 3. exact mnemonic-hash match
@@ -175,7 +188,9 @@ def diff_functions(
             sim = _similarity(o_fn, n_fn)
             if sim > best_sim:
                 best_addr, best_sim = o_addr, sim
-        if best_addr is not None and best_sim >= fuzzy_threshold:
+        if best_addr is not None and best_sim >= _effective_threshold(
+            old_unmatched[best_addr], n_fn, fuzzy_threshold
+        ):
             pop_pair(best_addr, n_addr, "fuzzy", best_sim)
             old_remaining.remove(best_addr)
 

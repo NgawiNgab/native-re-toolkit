@@ -130,7 +130,7 @@ class MachOBinary(Binary):
             if base + 80 > len(data):
                 break
             (sectname, _seg, addr, size, offset, _align, _reloff, _nreloc, sflags) = (
-                struct.unpack_from(fmt + "16s16sQQIIII", data, base)
+                struct.unpack_from(fmt + "16s16sQQIIIII", data, base)
             )
             name = sectname.split(b"\x00")[0].decode("ascii", "replace")
             raw = data[offset : offset + size] if offset + size <= len(data) else b""
@@ -158,7 +158,7 @@ class MachOBinary(Binary):
             if base + 68 > len(data):
                 break
             (sectname, _seg, addr, size, offset, _align, _reloff, _nreloc, sflags) = (
-                struct.unpack_from(fmt + "16s16sIIIIII", data, base)
+                struct.unpack_from(fmt + "16s16sIIIIIII", data, base)
             )
             name = sectname.split(b"\x00")[0].decode("ascii", "replace")
             raw = data[offset : offset + size] if offset + size <= len(data) else b""

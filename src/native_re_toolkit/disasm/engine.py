@@ -9,6 +9,14 @@ from ..errors import UnsupportedArchError
 from .archs import create_disassembler
 from .insn import Insn, from_capstone
 
+# libc/CRT functions that never return; a call to one ends the block.
+NORETURN_NAMES = frozenset({
+    "exit", "_exit", "_Exit", "exit_group", "abort", "__stack_chk_fail",
+    "__assert_fail", "panic", "err", "errx", "verr", "verrx",
+    "ExitProcess", "pthread_exit", "__cxa_throw", "longjmp", "siglongjmp",
+    "__longjmp", "_longjmp", "quick_exit", "_tcgetattr__noreturn",
+})
+
 
 class Disassembler:
     """Wraps a Capstone instance for a specific binary."""
@@ -78,6 +86,7 @@ class Disassembler:
         *,
         max_insns: int = 200_000,
         max_jump_table: int = 1024,
+        is_noreturn: Optional[Callable[[int], bool]] = None,
     ) -> "RecursiveResult":
         """Recursive-descent disassembly starting at *entry*.
 
@@ -89,6 +98,7 @@ class Disassembler:
         call_targets: set[int] = set()
         data_refs: list[Insn] = []
         jump_tables: dict[int, list[int]] = {}
+        noreturn_calls: set[int] = set()
         work = [entry]
         seen_starts: set[int] = set()
         ptr_size = 8 if self.bits == 64 else 4
@@ -116,6 +126,16 @@ class Disassembler:
                 if ins.is_call:
                     if ins.target is not None and in_code(ins.target):
                         call_targets.add(ins.target)
+                    if (
+                        ins.target is not None
+                        and is_noreturn is not None
+                        and is_noreturn(ins.target)
+                    ):
+                        # calls to exit()/abort()/__stack_chk_fail() do not
+                        # fall through; continuing here would swallow the
+                        # next function's bytes.
+                        noreturn_calls.add(ins.addr)
+                        break
                     cur += ins.size
                     continue
                 if ins.is_jump:
@@ -145,6 +165,7 @@ class Disassembler:
             call_targets=call_targets,
             data_refs=data_refs,
             jump_tables=jump_tables,
+            noreturn_calls=noreturn_calls,
             truncated=len(insns) >= max_insns,
         )
 
@@ -177,4 +198,5 @@ class RecursiveResult:
     call_targets: set[int] = field(default_factory=set)
     data_refs: list[Insn] = field(default_factory=list)
     jump_tables: dict[int, list[int]] = field(default_factory=dict)
+    noreturn_calls: set[int] = field(default_factory=set)
     truncated: bool = False

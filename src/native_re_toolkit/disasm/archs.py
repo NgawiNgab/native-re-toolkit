@@ -80,7 +80,12 @@ def create_disassembler(arch: str, bits: int, endian: str) -> tuple["capstone.Cs
     if entry is None:
         raise UnsupportedArchError(f"architecture not supported: {arch!r}")
     cs_arch, modes, fixed = entry
-    mode = modes.get((bits, endian)) or modes.get((bits, "little")) or modes.get((32, "little"))
+    # NB: do not use ``or``-chains here; CS_MODE_* values can be 0.
+    mode = modes.get((bits, endian))
+    if mode is None:
+        mode = modes.get((bits, "little"))
+    if mode is None:
+        mode = modes.get((32, "little"))
     if mode is None:
         raise UnsupportedArchError(
             f"no capstone mode for {arch}/{bits}/{endian}"

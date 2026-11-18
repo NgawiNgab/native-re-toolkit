@@ -6,22 +6,24 @@ from dataclasses import dataclass, field
 
 from ..loader.binary import Binary
 from .cfg import Function, build_function
-from .engine import Disassembler
+from .engine import NORETURN_NAMES, Disassembler
 
 # (pattern, mask, strength, alignment)
+# Strong patterns are distinctive enough to accept at any alignment
+# (compiler output is not always aligned, especially at -O0).
 _PROLOGUES: dict[str, list[tuple[bytes, bytes, str, int]]] = {
     "x86_64": [
-        (b"\xf3\x0f\x1e\xfa", b"\xff\xff\xff\xff", "strong", 4),   # endbr64
-        (b"\x55\x48\x89\xe5", b"\xff\xff\xff\xff", "strong", 4),   # push rbp; mov rbp,rsp
-        (b"\x55\x48\x8b\xec", b"\xff\xff\xff\xff", "strong", 4),   # push rbp; mov rbp,rsp (alt)
+        (b"\xf3\x0f\x1e\xfa", b"\xff\xff\xff\xff", "strong", 1),   # endbr64
+        (b"\x55\x48\x89\xe5", b"\xff\xff\xff\xff", "strong", 1),   # push rbp; mov rbp,rsp
+        (b"\x55\x48\x8b\xec", b"\xff\xff\xff\xff", "strong", 1),   # push rbp; mov rbp,rsp (alt)
         (b"\x48\x83\xec", b"\xff\xff\xff", "weak", 16),            # sub rsp, imm8
         (b"\x48\x81\xec", b"\xff\xff\xff", "weak", 16),            # sub rsp, imm32
         (b"\x41\x57\x41\x56", b"\xff\xff\xff\xff", "weak", 16),    # push r15; push r14
         (b"\x41\x56\x41\x55", b"\xff\xff\xff\xff", "weak", 16),    # push r14; push r13
     ],
     "x86": [
-        (b"\x55\x8b\xec", b"\xff\xff\xff", "strong", 4),           # push ebp; mov ebp,esp
-        (b"\x55\x89\xe5", b"\xff\xff\xff", "strong", 4),           # push ebp; mov ebp,esp (alt)
+        (b"\x55\x8b\xec", b"\xff\xff\xff", "strong", 1),           # push ebp; mov ebp,esp
+        (b"\x55\x89\xe5", b"\xff\xff\xff", "strong", 1),           # push ebp; mov ebp,esp (alt)
         (b"\x83\xec", b"\xff\xff", "weak", 16),                    # sub esp, imm8
     ],
     "arm64": [
@@ -116,6 +118,13 @@ def discover_functions(
     def read_va(va: int, n: int) -> bytes:
         return binary.read_va(va, n)
 
+    def is_noreturn(va: int) -> bool:
+        name = binary.plt_imports.get(va)
+        if name is None:
+            sym = binary.symbol_at(va)
+            name = sym.name if sym else None
+        return name in NORETURN_NAMES if name else False
+
     result = DiscoveryResult()
     claims = _ClaimMap(binary)
 
@@ -132,13 +141,19 @@ def discover_functions(
         if sym.value and in_code(sym.value):
             seeds.append((sym.value, sym.name))
 
-    queue: list[tuple[int, str]] = sorted(set(seeds))
+    # dedupe by address, preferring real symbol names over synthetic ones
+    by_addr: dict[int, str] = {}
+    for addr, name in sorted(seeds):
+        if addr not in by_addr or (by_addr[addr] in ("entry", "") and name):
+            by_addr[addr] = name
+    queue: list[tuple[int, str]] = sorted(by_addr.items())
     queued = set(queue)
     while queue and result.total < max_functions:
         addr, name = queue.pop(0)
         if claims.is_claimed(addr) or not in_code(addr):
             continue
-        fn = build_function(dis, read_va, in_code, addr, name or f"sub_{addr:08x}")
+        fn = build_function(dis, read_va, in_code, addr, name or f"sub_{addr:08x}",
+                            is_noreturn=is_noreturn)
         if not fn.insns:
             continue
         for ia in fn.insns:
@@ -157,7 +172,8 @@ def discover_functions(
     if prologue_scan:
         patterns = _PROLOGUES.get(binary.arch, [])
         if patterns:
-            _scan_gaps(binary, dis, in_code, read_va, claims, patterns, result, max_functions)
+            _scan_gaps(binary, dis, in_code, read_va, claims, patterns, result,
+                       max_functions, is_noreturn)
 
     return result
 
@@ -171,8 +187,58 @@ def _scan_gaps(
     patterns,
     result: DiscoveryResult,
     max_functions: int,
+    is_noreturn=None,
 ) -> None:
     rejected: set[int] = set()
+    # call targets harvested from heuristically recovered functions get a
+    # second-chance scan (they find prologue-less helpers like
+    # deregister_tm_clones).
+    pending_calls: set[int] = set()
+    scanned_calls: set[int] = set()
+    made_progress = True
+    while made_progress and result.total < max_functions:
+        made_progress = False
+        made_progress |= _gap_scan_pass(
+            binary, dis, in_code, read_va, claims, patterns, result,
+            max_functions, rejected, pending_calls, is_noreturn,
+        )
+        # try harvested call targets that are still unclaimed
+        for cand in sorted(pending_calls - scanned_calls):
+            scanned_calls.add(cand)
+            if result.total >= max_functions:
+                break
+            if claims.is_claimed(cand) or not in_code(cand) or cand in rejected:
+                continue
+            fn = build_function(dis, read_va, in_code, cand,
+                                f"sub_{cand:08x}", discovered=True,
+                                is_noreturn=is_noreturn)
+            if _looks_like_call_target(fn, claims):
+                for ia in fn.insns:
+                    claims.claim(ia, fn.insns[ia].size)
+                result.functions[cand] = fn
+                result.from_heuristics += 1
+                pending_calls.update(fn.calls)
+                made_progress = True
+            else:
+                rejected.add(cand)
+
+
+def _gap_scan_pass(
+    binary: Binary,
+    dis: Disassembler,
+    in_code,
+    read_va,
+    claims: _ClaimMap,
+    patterns,
+    result: DiscoveryResult,
+    max_functions: int,
+    rejected: set,
+    pending_calls: set,
+    is_noreturn,
+) -> bool:
+    """One sweep over unclaimed executable bytes. Returns True if any
+    function was accepted."""
+    made_progress = False
     for sec in binary.executable_sections():
         data = sec.data
         cmap = claims.maps.get(sec.name)
@@ -200,7 +266,8 @@ def _scan_gaps(
                 pos += 1
                 continue
             fn = build_function(
-                dis, read_va, in_code, cand_va, f"sub_{cand_va:08x}", discovered=True
+                dis, read_va, in_code, cand_va, f"sub_{cand_va:08x}",
+                discovered=True, is_noreturn=is_noreturn,
             )
             ok = _looks_like_function(fn, claims)
             if ok:
@@ -208,10 +275,13 @@ def _scan_gaps(
                     claims.claim(ia, fn.insns[ia].size)
                 result.functions[cand_va] = fn
                 result.from_heuristics += 1
+                pending_calls.update(fn.calls)
+                made_progress = True
                 pos = fn.end - sec.vaddr
             else:
                 rejected.add(cand_va)
                 pos += 1
+    return made_progress
 
 
 def _looks_like_function(fn: Function, claims: _ClaimMap) -> bool:
@@ -233,3 +303,20 @@ def _looks_like_function(fn: Function, claims: _ClaimMap) -> bool:
             return True
         return False
     return True
+
+
+def _looks_like_call_target(fn: Function, claims: _ClaimMap) -> bool:
+    """Validation for addresses harvested from call instructions.
+
+    A direct call target is very likely a function even without a
+    prologue (including single-instruction stubs like
+    ``_dl_relocate_static_pie`` which is just ``ret``).
+    """
+    if not fn.insns or not fn.blocks:
+        return False
+    for ia, ins in fn.insns.items():
+        if claims.any_claimed(ia, ins.size):
+            return False
+    last_block = max(fn.blocks.values(), key=lambda b: b.end)
+    last = last_block.insns[-1]
+    return last.is_ret or last.is_jump or last.is_privileged_or_trap
