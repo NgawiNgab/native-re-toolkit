@@ -1,6 +1,7 @@
 """Small shared utilities."""
 
 from .hexdump import hexdump  # noqa: F401
+from .pattern import anchor_of, find_pattern_all, verify_at  # noqa: F401
 
 
 def fmt_addr(va: int, bits: int = 64) -> str:

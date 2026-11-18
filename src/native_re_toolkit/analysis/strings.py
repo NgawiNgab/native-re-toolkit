@@ -11,7 +11,7 @@ from ..loader.binary import Binary, Section
 _PRINTABLE = set(range(0x20, 0x7F)) | {0x09, 0x0A, 0x0D}
 
 
-@dataclass
+@dataclass(slots=True)
 class StringRef:
     va: int
     offset: int
@@ -141,3 +141,38 @@ def string_covering(strings: list[StringRef], va: int) -> StringRef | None:
             if best is None or s.va > best.va:
                 best = s
     return best
+
+
+class StringIndex:
+    """Sorted-address index for O(log n) string lookups.
+
+    Covers both exact-start and interior-address queries (overlapping
+    strings from suffix reuse are handled by a short backwards walk).
+    """
+
+    _OVERLAP_WALK = 8
+
+    def __init__(self, strings: list[StringRef]):
+        self._by_start = sorted(strings, key=lambda s: s.va)
+        self._starts = [s.va for s in self._by_start]
+        self._exact = {s.va: s for s in self._by_start}
+
+    def exact(self, va: int) -> StringRef | None:
+        return self._exact.get(va)
+
+    def covering(self, va: int) -> StringRef | None:
+        import bisect
+
+        i = bisect.bisect_right(self._starts, va) - 1
+        steps = 0
+        best: StringRef | None = None
+        while i >= 0 and steps < self._OVERLAP_WALK:
+            s = self._by_start[i]
+            if s.va <= va < s.va + len(s.value) + 1:
+                if best is None or s.va > best.va:
+                    best = s
+            elif s.va + len(s.value) + 1 <= va and best is not None:
+                break
+            i -= 1
+            steps += 1
+        return best

@@ -8,8 +8,7 @@ from typing import Optional
 from .engine import Disassembler, RecursiveResult
 from .insn import Insn
 
-
-@dataclass
+@dataclass(slots=True)
 class BasicBlock:
     start: int
     end: int                    # exclusive
@@ -22,7 +21,7 @@ class BasicBlock:
         return self.end - self.start
 
 
-@dataclass
+@dataclass(slots=True)
 class Function:
     start: int
     name: str = ""
@@ -144,9 +143,10 @@ def build_function(
     name: str = "",
     discovered: bool = False,
     is_noreturn=None,
+    pool: Optional[dict[int, Insn]] = None,
 ) -> Function:
     """Full function recovery: recursive descent + CFG."""
-    result = dis.recursive(entry, read_va, in_code, is_noreturn=is_noreturn)
+    result = dis.recursive(entry, read_va, in_code, is_noreturn=is_noreturn, pool=pool)
     blocks, edges = build_cfg(result)
     fn = Function(
         start=entry,

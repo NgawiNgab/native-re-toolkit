@@ -7,7 +7,7 @@ from typing import Callable, Iterator, Optional
 
 from ..errors import UnsupportedArchError
 from .archs import create_disassembler
-from .insn import Insn, from_capstone
+from .insn import Insn, from_capstone, from_capstone_fast
 
 # libc/CRT functions that never return; a call to one ends the block.
 NORETURN_NAMES = frozenset({
@@ -18,6 +18,39 @@ NORETURN_NAMES = frozenset({
 })
 
 
+class _StreamDecoder:
+    """Decodes forward with one long-lived capstone generator.
+
+    Creating a ``Cs.disasm`` generator per instruction is the dominant
+    cost of recursive descent; streaming decodes whole chunks and only
+    restarts the generator on seeks (branch targets) or chunk ends.
+    """
+
+    def __init__(self, dis: "Disassembler", read_va, chunk: int = 4096):
+        self.dis = dis
+        self.read_va = read_va
+        self.chunk = chunk
+        self._gen = None
+        self._next_va: int = -1
+
+    def at(self, va: int) -> Optional[Insn]:
+        for _ in range(2):
+            if self._gen is None or self._next_va != va:
+                raw = self.read_va(va, self.chunk)
+                if not raw:
+                    self._gen = None
+                    return None
+                self._gen = self.dis.disasm(raw, va)
+            try:
+                ins = next(self._gen)
+            except StopIteration:
+                self._gen = None
+                continue  # chunk end or bad byte: restart once at va
+            self._next_va = ins.addr + ins.size
+            return ins
+        return None
+
+
 class Disassembler:
     """Wraps a Capstone instance for a specific binary."""
 
@@ -26,19 +59,40 @@ class Disassembler:
         self.bits = bits
         self.endian = endian
         self.md, self.fixed_size = create_disassembler(arch, bits, endian)
+        # fast path: no operand detail (~8x cheaper per instruction)
+        self.md.detail = False
+        self._md_detail = None
+
+    @property
+    def md_detail(self):
+        """Lazily created detail-mode decoder for operand inspection."""
+        if self._md_detail is None:
+            self._md_detail, _ = create_disassembler(self.arch, self.bits, self.endian)
+            self._md_detail.detail = True
+        return self._md_detail
 
     @classmethod
     def for_binary(cls, binary) -> "Disassembler":
         return cls(binary.arch, binary.bits, binary.endian)
 
     # ------------------------------------------------------------------
-    def disasm(self, data: bytes, va: int) -> Iterator[Insn]:
-        """Yield normalized instructions for a byte buffer."""
-        for ci in self.md.disasm(data, va):
-            yield from_capstone(ci, self.arch)
+    def disasm(self, data: bytes, va: int, detail: bool = False, count: int = 0) -> Iterator[Insn]:
+        """Yield normalized instructions for a byte buffer.
 
-    def disasm_one(self, data: bytes, va: int) -> Optional[Insn]:
-        for ins in self.disasm(data[:64], va):
+        ``detail=False`` (default) uses the fast mnemonic/op_str path;
+        ``detail=True`` enables full capstone operand analysis.
+        ``count`` caps the number of instructions per C decode round
+        (bounds peak memory on huge buffers).
+        """
+        if detail:
+            for ci in self.md_detail.disasm(data, va, count=count):
+                yield from_capstone(ci, self.arch)
+        else:
+            for ci in self.md.disasm(data, va, count=count):
+                yield from_capstone_fast(ci, self.arch)
+
+    def disasm_one(self, data: bytes, va: int, detail: bool = False) -> Optional[Insn]:
+        for ins in self.disasm(data[:64], va, detail=detail):
             return ins
         return None
 
@@ -77,6 +131,32 @@ class Disassembler:
             pos += ins.size
         return out
 
+    def build_pool(self, data: bytes, va: int) -> dict[int, Insn]:
+        """Decode a whole section once into an address -> Insn pool.
+
+        Uses one streaming capstone call (fast path) instead of a
+        generator per instruction. Note the variable-length-ISA caveat:
+        bytes that are actually inline data decode into garbage insns;
+        those simply stay unreachable during CFG walks.
+        """
+        pool: dict[int, Insn] = {}
+        n = len(data)
+        step = self.fixed_size or 1
+        pos = 0
+        # decode in count-capped rounds so the transient C-side instruction
+        # array stays bounded (a full multi-MB decode would allocate it
+        # eagerly and dominate peak RSS)
+        round_insns = 16384
+        while pos < n:
+            stop = pos
+            for ins in self.disasm(data[pos:], va + pos, count=round_insns):
+                pool[ins.addr] = ins
+                stop = ins.addr - va + ins.size
+            if stop == pos:
+                stop = pos + step  # undecodable bytes: skip and resync
+            pos = stop
+        return pool
+
     # ------------------------------------------------------------------
     def recursive(
         self,
@@ -87,12 +167,17 @@ class Disassembler:
         max_insns: int = 200_000,
         max_jump_table: int = 1024,
         is_noreturn: Optional[Callable[[int], bool]] = None,
+        pool: Optional[dict[int, Insn]] = None,
     ) -> "RecursiveResult":
         """Recursive-descent disassembly starting at *entry*.
 
         Follows direct jumps, both arms of conditional jumps and simple
         jump tables. Calls are recorded (their targets returned in
         ``call_targets``) but not entered.
+
+        When *pool* (an address -> Insn map covering the executable
+        sections, e.g. from :meth:`build_pool`) is given, instructions
+        are looked up there instead of decoding on the fly.
         """
         insns: dict[int, Insn] = {}
         call_targets: set[int] = set()
@@ -102,6 +187,12 @@ class Disassembler:
         work = [entry]
         seen_starts: set[int] = set()
         ptr_size = 8 if self.bits == 64 else 4
+        if pool is not None:
+            def at(va: int) -> Optional[Insn]:
+                return pool.get(va)
+        else:
+            decoder = _StreamDecoder(self, read_va)
+            at = decoder.at
 
         while work and len(insns) < max_insns:
             addr = work.pop()
@@ -114,10 +205,7 @@ class Disassembler:
                     break  # merge with already decoded stream
                 if not in_code(cur):
                     break
-                raw = read_va(cur, 64)
-                if len(raw) < 1:
-                    break
-                ins = self.disasm_one(raw, cur)
+                ins = at(cur)
                 if ins is None or ins.size == 0:
                     break
                 insns[cur] = ins
@@ -191,7 +279,7 @@ class Disassembler:
         return targets
 
 
-@dataclass
+@dataclass(slots=True)
 class RecursiveResult:
     entry: int
     insns: dict[int, Insn]

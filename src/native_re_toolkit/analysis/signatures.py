@@ -19,9 +19,10 @@ from typing import Iterable, Optional
 
 from ..errors import AnalysisError
 from ..loader.binary import Binary
+from ..util.pattern import find_pattern_all
 
 
-@dataclass
+@dataclass(slots=True)
 class Signature:
     name: str
     pattern: bytes          # expected values (masked)
@@ -34,7 +35,7 @@ class Signature:
         return len(self.pattern)
 
 
-@dataclass
+@dataclass(slots=True)
 class SigMatch:
     name: str
     va: int                 # virtual address (or file offset if no section)
@@ -94,56 +95,9 @@ def compile_pattern(text: str, name: str = "", **kwargs) -> Signature:
     return Signature(name=name, pattern=values, mask=mask, **kwargs)
 
 
-def _anchor(pattern: bytes, mask: bytes) -> tuple[int, bytes]:
-    """Find the longest run of exact bytes to use as a search anchor."""
-    best_start, best_len, cur_start, cur_len = 0, 0, 0, 0
-    for i, m in enumerate(mask):
-        if m == 0xFF:
-            if cur_len == 0:
-                cur_start = i
-            cur_len += 1
-            if cur_len > best_len:
-                best_start, best_len = cur_start, cur_len
-        else:
-            cur_len = 0
-    if best_len == 0:
-        return 0, b""  # no exact bytes at all
-    return best_start, pattern[best_start : best_start + best_len]
-
-
-def _verify(data: bytes, pos: int, pattern: bytes, mask: bytes) -> bool:
-    for i in range(len(pattern)):
-        if data[pos + i] & mask[i] != pattern[i]:
-            return False
-    return True
-
-
 def find_all(data: bytes, sig: Signature, *, max_hits: int = 1000) -> list[int]:
     """Return all offsets in *data* where *sig* matches."""
-    hits: list[int] = []
-    plen = len(sig.pattern)
-    if plen == 0 or len(data) < plen:
-        return hits
-    anchor_off, anchor = _anchor(sig.pattern, sig.mask)
-    if anchor:
-        start = 0
-        while len(hits) < max_hits:
-            idx = data.find(anchor, start)
-            if idx < 0:
-                break
-            cand = idx - anchor_off
-            if cand >= 0 and cand + plen <= len(data):
-                if _verify(data, cand, sig.pattern, sig.mask):
-                    hits.append(cand)
-            start = idx + 1
-    else:
-        # fully masked pattern: brute force (slow but correct)
-        for cand in range(0, len(data) - plen + 1):
-            if _verify(data, cand, sig.pattern, sig.mask):
-                hits.append(cand)
-                if len(hits) >= max_hits:
-                    break
-    return hits
+    return find_pattern_all(data, sig.pattern, sig.mask, max_hits=max_hits)
 
 
 def load_signatures(path: Optional[str] = None) -> list[Signature]:

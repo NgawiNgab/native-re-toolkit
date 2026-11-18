@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..loader.binary import Binary
+from ..util.pattern import find_pattern_all
 from .cfg import Function, build_function
 from .engine import NORETURN_NAMES, Disassembler
+from .insn import Insn
 
 # (pattern, mask, strength, alignment)
 # Strong patterns are distinctive enough to accept at any alignment
@@ -37,7 +39,7 @@ _PROLOGUES: dict[str, list[tuple[bytes, bytes, str, int]]] = {
 }
 
 
-@dataclass
+@dataclass(slots=True)
 class DiscoveryResult:
     functions: dict[int, Function] = field(default_factory=dict)
     from_symbols: int = 0
@@ -74,8 +76,8 @@ class _ClaimMap:
         start = va - sec.vaddr
         end = min(start + size, len(self.maps[sec.name]))
         m = self.maps[sec.name]
-        for i in range(start, end):
-            m[i] = 1
+        if end > start:
+            m[start:end] = b"\x01" * (end - start)
 
     def is_claimed(self, va: int) -> bool:
         sec = self.binary.section_at(va)
@@ -128,6 +130,22 @@ def discover_functions(
     result = DiscoveryResult()
     claims = _ClaimMap(binary)
 
+    # Decode every executable section once into an instruction pool;
+    # recursive descent then walks the pool instead of re-decoding.
+    # Sanity: if many symbol entries do not land on pool instruction
+    # boundaries (heavy inline data), fall back to streaming mode.
+    pool: dict[int, Insn] = {}
+    for sec in binary.executable_sections():
+        if sec.data:
+            pool.update(dis.build_pool(sec.data, sec.vaddr))
+    sym_entries = [s.value for s in binary.function_symbols() if in_code(s.value)]
+    if sym_entries:
+        covered = sum(1 for a in sym_entries if a in pool)
+        if covered / len(sym_entries) < 0.95:
+            pool = None  # inline data skew: fall back to streaming decode
+    elif not pool:
+        pool = None
+
     # ---- phase 1: known symbols --------------------------------------
     seeds: list[tuple[int, str]] = []
     for sym in binary.function_symbols():
@@ -153,7 +171,7 @@ def discover_functions(
         if claims.is_claimed(addr) or not in_code(addr):
             continue
         fn = build_function(dis, read_va, in_code, addr, name or f"sub_{addr:08x}",
-                            is_noreturn=is_noreturn)
+                            is_noreturn=is_noreturn, pool=pool)
         if not fn.insns:
             continue
         for ia in fn.insns:
@@ -173,7 +191,7 @@ def discover_functions(
         patterns = _PROLOGUES.get(binary.arch, [])
         if patterns:
             _scan_gaps(binary, dis, in_code, read_va, claims, patterns, result,
-                       max_functions, is_noreturn)
+                       max_functions, is_noreturn, pool)
 
     return result
 
@@ -188,100 +206,63 @@ def _scan_gaps(
     result: DiscoveryResult,
     max_functions: int,
     is_noreturn=None,
+    pool: dict[int, Insn] | None = None,
 ) -> None:
     rejected: set[int] = set()
-    # call targets harvested from heuristically recovered functions get a
-    # second-chance scan (they find prologue-less helpers like
-    # deregister_tm_clones).
     pending_calls: set[int] = set()
-    scanned_calls: set[int] = set()
-    made_progress = True
-    while made_progress and result.total < max_functions:
-        made_progress = False
-        made_progress |= _gap_scan_pass(
-            binary, dis, in_code, read_va, claims, patterns, result,
-            max_functions, rejected, pending_calls, is_noreturn,
-        )
-        # try harvested call targets that are still unclaimed
-        for cand in sorted(pending_calls - scanned_calls):
-            scanned_calls.add(cand)
-            if result.total >= max_functions:
-                break
-            if claims.is_claimed(cand) or not in_code(cand) or cand in rejected:
-                continue
-            fn = build_function(dis, read_va, in_code, cand,
-                                f"sub_{cand:08x}", discovered=True,
-                                is_noreturn=is_noreturn)
-            if _looks_like_call_target(fn, claims):
-                for ia in fn.insns:
-                    claims.claim(ia, fn.insns[ia].size)
-                result.functions[cand] = fn
-                result.from_heuristics += 1
-                pending_calls.update(fn.calls)
-                made_progress = True
-            else:
-                rejected.add(cand)
 
-
-def _gap_scan_pass(
-    binary: Binary,
-    dis: Disassembler,
-    in_code,
-    read_va,
-    claims: _ClaimMap,
-    patterns,
-    result: DiscoveryResult,
-    max_functions: int,
-    rejected: set,
-    pending_calls: set,
-    is_noreturn,
-) -> bool:
-    """One sweep over unclaimed executable bytes. Returns True if any
-    function was accepted."""
-    made_progress = False
+    # single anchored sweep per section: locate prologue pattern hits with
+    # C-speed bytes.find instead of per-byte matching
     for sec in binary.executable_sections():
         data = sec.data
         cmap = claims.maps.get(sec.name)
         if cmap is None or not data:
             continue
-        pos = 0
-        n = len(data)
-        while pos < n and result.total < max_functions:
-            # skip claimed region quickly
+        hits: set[int] = set()
+        for pattern, mask, strength, align in patterns:
+            for pos in find_pattern_all(data, pattern, mask, max_hits=max_functions * 4):
+                if (sec.vaddr + pos) % align == 0:
+                    hits.add(pos)
+        for pos in sorted(hits):
+            if result.total >= max_functions:
+                break
             if cmap[pos]:
-                pos += 1
-                continue
-            matched = None
-            for pattern, mask, strength, align in patterns:
-                if (sec.vaddr + pos) % align != 0:
-                    continue
-                if _match(data, pos, pattern, mask):
-                    matched = (pattern, strength)
-                    break
-            if matched is None:
-                pos += 1
                 continue
             cand_va = sec.vaddr + pos
-            if cand_va in rejected or claims.is_claimed(cand_va):
-                pos += 1
+            if cand_va in rejected:
                 continue
             fn = build_function(
                 dis, read_va, in_code, cand_va, f"sub_{cand_va:08x}",
-                discovered=True, is_noreturn=is_noreturn,
+                discovered=True, is_noreturn=is_noreturn, pool=pool,
             )
-            ok = _looks_like_function(fn, claims)
-            if ok:
+            if _looks_like_function(fn, claims):
                 for ia in fn.insns:
                     claims.claim(ia, fn.insns[ia].size)
                 result.functions[cand_va] = fn
                 result.from_heuristics += 1
                 pending_calls.update(fn.calls)
-                made_progress = True
-                pos = fn.end - sec.vaddr
             else:
                 rejected.add(cand_va)
-                pos += 1
-    return made_progress
+
+    # prologue-less helpers reached via direct calls from the recovered set
+    scanned: set[int] = set()
+    while pending_calls - scanned and result.total < max_functions:
+        cand = min(pending_calls - scanned)
+        scanned.add(cand)
+        if claims.is_claimed(cand) or not in_code(cand) or cand in rejected:
+            continue
+        fn = build_function(
+            dis, read_va, in_code, cand, f"sub_{cand:08x}",
+            discovered=True, is_noreturn=is_noreturn, pool=pool,
+        )
+        if _looks_like_call_target(fn, claims):
+            for ia in fn.insns:
+                claims.claim(ia, fn.insns[ia].size)
+            result.functions[cand] = fn
+            result.from_heuristics += 1
+            pending_calls.update(fn.calls)
+        else:
+            rejected.add(cand)
 
 
 def _looks_like_function(fn: Function, claims: _ClaimMap) -> bool:

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Iterator, Optional
 
 
-@dataclass
+@dataclass(slots=True)
 class Section:
     """A mapped section/segment of the binary."""
 
@@ -57,7 +57,7 @@ class Section:
         return self.offset + delta
 
 
-@dataclass
+@dataclass(slots=True)
 class Symbol:
     """A named address: function, object or undefined (imported) symbol."""
 
@@ -74,7 +74,7 @@ class Symbol:
         return self.type == "func"
 
 
-@dataclass
+@dataclass(slots=True)
 class Relocation:
     """A relocation entry."""
 
@@ -110,6 +110,7 @@ class Binary:
         self._section_starts: list[int] = []
         self._sym_by_addr: dict[int, Symbol] = {}
         self._sym_by_name: dict[str, Symbol] = {}
+        self._sym_addrs: list[int] = []
 
     # ------------------------------------------------------------------
     # post-parse bookkeeping
@@ -125,6 +126,7 @@ class Binary:
                 if cur is None or (sym.is_function and not cur.is_function):
                     self._sym_by_addr[sym.value] = sym
                 self._sym_by_name.setdefault(sym.name, sym)
+        self._sym_addrs = sorted(self._sym_by_addr)
         return self
 
     # ------------------------------------------------------------------
@@ -258,7 +260,7 @@ class Binary:
             return self.plt_imports[va] + "@plt"
         if va in self.got_imports:
             return self.got_imports[va] + "@got"
-        starts = sorted(self._sym_by_addr)
+        starts = self._sym_addrs
         i = bisect.bisect_right(starts, va) - 1
         if i >= 0:
             base = starts[i]

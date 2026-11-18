@@ -59,7 +59,7 @@ CATEGORIES: dict[str, tuple[str, ...]] = {
 }
 
 
-@dataclass
+@dataclass(slots=True)
 class ImportCategory:
     category: str
     names: list[str] = field(default_factory=list)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import asdict
 from typing import Optional
 
 from . import __version__
@@ -293,7 +294,7 @@ def cmd_xrefs(args) -> int:
         dst = _resolve_target(b, args.to)
         hits = db.to(dst)
         if args.json:
-            _json_out([x.__dict__ for x in hits])
+            _json_out([asdict(x) for x in hits])
         else:
             name = b.name_for_address(dst) or ""
             print(f"xrefs to {fmt_addr(dst, b.bits)} {name}: {len(hits)}")
@@ -302,7 +303,7 @@ def cmd_xrefs(args) -> int:
                 print(f"  {x.kind:<10} from {fmt_addr(x.src, b.bits)} in {srcname}")
         return 0
     if args.json:
-        _json_out([x.__dict__ for x in db.xrefs])
+        _json_out([asdict(x) for x in db.xrefs])
     else:
         for x in db.xrefs[: args.limit]:
             dst_name = f"  ; {x.dst_name}" if x.dst_name else ""

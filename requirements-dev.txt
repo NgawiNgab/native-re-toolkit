@@ -1,0 +1,3 @@
+-r requirements.txt
+pytest>=7.0
+# optional: yara-python>=4.3  (install with: pip install yara-python)

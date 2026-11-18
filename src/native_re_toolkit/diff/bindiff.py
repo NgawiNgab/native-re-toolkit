@@ -22,7 +22,7 @@ from ..disasm.cfg import Function
 from ..disasm.discovery import discover_functions
 
 
-@dataclass
+@dataclass(slots=True)
 class FunctionPair:
     status: str                      # 'identical' | 'changed' | 'added' | 'removed'
     old: Optional[Function]
@@ -31,7 +31,7 @@ class FunctionPair:
     match_method: str = ""           # 'name' | 'address' | 'hash' | 'fuzzy' | ''
 
 
-@dataclass
+@dataclass(slots=True)
 class DiffReport:
     pairs: list[FunctionPair] = field(default_factory=list)
     old_only_count: int = 0

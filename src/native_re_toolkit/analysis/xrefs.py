@@ -15,10 +15,10 @@ from typing import Optional
 
 from ..loader.binary import Binary
 from ..disasm.cfg import Function
-from .strings import StringRef, string_covering
+from .strings import StringIndex, StringRef, string_covering
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Xref:
     src: int                  # address of the referencing instruction
     dst: int                  # referenced address
@@ -27,7 +27,7 @@ class Xref:
     dst_name: Optional[str] = None    # resolved symbol/string preview
 
 
-@dataclass
+@dataclass(slots=True)
 class XrefDB:
     xrefs: list[Xref] = field(default_factory=list)
     _to: dict[int, list[Xref]] = field(default_factory=dict)
@@ -59,8 +59,7 @@ def build_xrefs(
     """Compute the full xref database for the recovered *functions*."""
     db = XrefDB()
     strings = strings if strings is not None else []
-    # function starts for quick membership checks
-    func_starts = set(functions)
+    str_index = StringIndex(strings)
 
     for fn in functions.values():
         for addr in sorted(fn.insns):
@@ -75,11 +74,11 @@ def build_xrefs(
                 db.add(Xref(src=addr, dst=ins.target, kind="jump",
                             src_function=fn.start, dst_name=name))
             if ins.mem_ref is not None and not (ins.is_jump and ins.indirect):
-                xref = _resolve_data_ref(binary, strings, ins, fn)
+                xref = _resolve_data_ref(binary, str_index, ins, fn)
                 if xref is not None:
                     db.add(xref)
             elif not ins.is_branch and ins.imms:
-                xref = _resolve_imm_ref(binary, strings, ins, fn)
+                xref = _resolve_imm_ref(binary, str_index, ins, fn)
                 if xref is not None:
                     db.add(xref)
     return db
@@ -96,7 +95,7 @@ def _resolve_code_name(binary: Binary, va: int) -> Optional[str]:
 
 def _resolve_imm_ref(
     binary: Binary,
-    strings: list[StringRef],
+    strings: StringIndex,
     ins,
     fn: Function,
 ) -> Optional[Xref]:
@@ -111,7 +110,7 @@ def _resolve_imm_ref(
         if va in binary.got_imports:
             return Xref(src=ins.addr, dst=va, kind="data_read", src_function=fn.start,
                         dst_name=binary.got_imports[va] + "@got")
-        s = string_covering(strings, va)
+        s = strings.covering(va)
         if s is not None:
             preview = s.escaped if len(s.escaped) <= 48 else s.escaped[:45] + "..."
             return Xref(src=ins.addr, dst=va, kind="data_read", src_function=fn.start,
@@ -128,7 +127,7 @@ def _resolve_imm_ref(
 
 def _resolve_data_ref(
     binary: Binary,
-    strings: list[StringRef],
+    strings: StringIndex,
     ins,
     fn: Function,
 ) -> Optional[Xref]:
@@ -140,9 +139,9 @@ def _resolve_data_ref(
     if va in binary.got_imports:
         return Xref(src=ins.addr, dst=va, kind=kind, src_function=fn.start,
                     dst_name=binary.got_imports[va] + "@got")
-    s = string_covering(strings, va)
+    s = strings.covering(va)
     if s is not None:
-        preview = s.value if len(s.value) <= 48 else s.value[:45] + "..."
+        preview = s.escaped if len(s.escaped) <= 48 else s.escaped[:45] + "..."
         return Xref(src=ins.addr, dst=va, kind=kind, src_function=fn.start,
                     dst_name=f'"{preview}"')
     name = binary.name_for_address(va)
