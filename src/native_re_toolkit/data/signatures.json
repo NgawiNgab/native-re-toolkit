@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "description": "Bundled signature pack: well-known cryptographic constants and encodings. Patterns are hex byte strings; ?? is a wildcard byte, nibble wildcards like 4? or ?f are supported.",
+  "signatures": [
+    {
+      "name": "sha256_k_table",
+      "pattern": "98 2f 8a 42 91 44 37 71 cf fb c0 b5 a5 db b5 e9 5b c2 56 39 f1 11 f1 59 a4 82 3f 92 d5 5e 1c ab",
+      "description": "SHA-256 round constants K[0..7] (little-endian uint32)",
+      "tags": ["crypto", "hash", "sha256"]
+    },
+    {
+      "name": "sha256_init_state",
+      "pattern": "67 e6 09 6a 85 ae 67 bb 72 f3 6e 3c 3a f5 4f a5",
+      "description": "SHA-256 initial hash state H0 (little-endian uint32)",
+      "tags": ["crypto", "hash", "sha256"]
+    },
+    {
+      "name": "sha1_k_constants",
+      "pattern": "99 79 82 5a a1 eb d9 6e dc bc 1b 8f d6 c1 62 ca",
+      "description": "SHA-1 round constants (little-endian uint32)",
+      "tags": ["crypto", "hash", "sha1"]
+    },
+    {
+      "name": "md5_k_table",
+      "pattern": "78 a4 6a d7 56 b7 c7 e8 db 70 20 24 ee ce bd c1 af 0f 7c f5 2a c6 87 47 13 46 30 a8 01 95 46 fd",
+      "description": "MD5 sine table K[0..7] (little-endian uint32)",
+      "tags": ["crypto", "hash", "md5"]
+    },
+    {
+      "name": "aes_sbox",
+      "pattern": "63 7c 77 7b f2 6b 6f c5 30 01 67 2b fe d7 ab 76 ca 82 c9 7d fa 59 47 f0 ad d4 a2 af 9c a4 72 c0",
+      "description": "AES forward S-box (first 32 entries)",
+      "tags": ["crypto", "cipher", "aes"]
+    },
+    {
+      "name": "aes_inv_sbox",
+      "pattern": "52 09 6a d5 30 36 a5 38 bf 40 a3 9e 81 f3 d7 fb",
+      "description": "AES inverse S-box (first 16 entries)",
+      "tags": ["crypto", "cipher", "aes"]
+    },
+    {
+      "name": "chacha20_sigma",
+      "pattern": "65 78 70 61 6e 64 20 33 32 2d 62 79 74 65 20 6b",
+      "description": "ChaCha20 sigma constant 'expand 32-byte k'",
+      "tags": ["crypto", "cipher", "chacha20"]
+    },
+    {
+      "name": "crc32_ieee_table",
+      "pattern": "00 00 00 00 96 30 07 77 2c 61 0e ee ba 51 09 99 19 c4 6d 07 8f f4 6a 70 35 a5 63 e9 a3 95 64 9e",
+      "description": "CRC-32 (IEEE 802.3) lookup table, first 8 entries (little-endian)",
+      "tags": ["checksum", "crc32"]
+    },
+    {
+      "name": "base64_alphabet",
+      "pattern": "41 42 43 44 45 46 47 48 49 4a 4b 4c 4d 4e 4f 50 51 52 53 54 55 56 57 58 59 5a 61 62 63 64 65 66 67 68 69 6a 6b 6c 6d 6e 6f 70 71 72 73 74 75 76 77 78 79 7a 30 31 32 33 34 35 36 37 38 39 2b 2f",
+      "description": "Standard Base64 alphabet",
+      "tags": ["encoding", "base64"]
+    }
+  ]
+}
