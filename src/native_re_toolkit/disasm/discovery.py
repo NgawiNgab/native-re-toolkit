@@ -171,7 +171,8 @@ def discover_functions(
         if claims.is_claimed(addr) or not in_code(addr):
             continue
         fn = build_function(dis, read_va, in_code, addr, name or f"sub_{addr:08x}",
-                            is_noreturn=is_noreturn, pool=pool)
+                            is_noreturn=is_noreturn, pool=pool,
+                            table_ok=binary.jump_table_ok)
         if not fn.insns:
             continue
         for ia in fn.insns:
@@ -234,6 +235,7 @@ def _scan_gaps(
             fn = build_function(
                 dis, read_va, in_code, cand_va, f"sub_{cand_va:08x}",
                 discovered=True, is_noreturn=is_noreturn, pool=pool,
+                table_ok=binary.jump_table_ok,
             )
             if _looks_like_function(fn, claims):
                 for ia in fn.insns:
@@ -254,6 +256,7 @@ def _scan_gaps(
         fn = build_function(
             dis, read_va, in_code, cand, f"sub_{cand:08x}",
             discovered=True, is_noreturn=is_noreturn, pool=pool,
+            table_ok=binary.jump_table_ok,
         )
         if _looks_like_call_target(fn, claims):
             for ia in fn.insns:

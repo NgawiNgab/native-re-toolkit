@@ -144,9 +144,11 @@ def build_function(
     discovered: bool = False,
     is_noreturn=None,
     pool: Optional[dict[int, Insn]] = None,
+    table_ok=None,
 ) -> Function:
     """Full function recovery: recursive descent + CFG."""
-    result = dis.recursive(entry, read_va, in_code, is_noreturn=is_noreturn, pool=pool)
+    result = dis.recursive(entry, read_va, in_code, is_noreturn=is_noreturn,
+                           pool=pool, table_ok=table_ok)
     blocks, edges = build_cfg(result)
     fn = Function(
         start=entry,

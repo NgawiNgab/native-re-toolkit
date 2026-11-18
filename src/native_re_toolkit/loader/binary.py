@@ -175,6 +175,20 @@ class Binary:
                 return sec
         return None
 
+    def jump_table_ok(self, va: int) -> bool:
+        """True when *va* can plausibly host an absolute jump table:
+        a readable section that is neither executable nor writable
+        (.rodata / .rdata / __const). This rejects GOT slots, PLT stubs
+        and function pointers, which hold single code pointers, not
+        switch tables."""
+        sec = self.section_at(va)
+        return (
+            sec is not None
+            and sec.readable
+            and not sec.executable
+            and not sec.writable
+        )
+
     def va_to_offset(self, va: int) -> Optional[int]:
         sec = self.section_at(va)
         if sec is None:

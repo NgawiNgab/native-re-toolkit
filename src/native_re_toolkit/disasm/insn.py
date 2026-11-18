@@ -62,6 +62,20 @@ _X86_RIP_MEM_RE = re.compile(r"\[\s*rip\s*(?:(\+|-)\s*(0x[0-9a-fA-F]+))?\s*\]")
 _X86_ABS_MEM_RE = re.compile(r"\[\s*(0x[0-9a-fA-F]+)\s*\]")
 _X86_ANY_MEM_RE = re.compile(r"\[([^\]]*)\]")
 
+# Capstone fuses some x86 prefixes into the mnemonic string: IBT builds
+# produce "notrack jmp", MPX "bnd jmp", and f3 c3 comes back as
+# "repz ret". Classification tables key on the real mnemonic, so strip
+# these prefixes first (e.g. "notrack jmp" -> "jmp", "repz ret" -> "ret").
+_X86_PREFIX_TOKENS = ("notrack", "bnd", "repne", "repnz", "repe", "repz", "rep")
+
+
+def _strip_x86_prefixes(mnemonic: str) -> str:
+    """Remove capstone-fused prefix tokens from an x86 mnemonic."""
+    head, _, rest = mnemonic.partition(" ")
+    if head in _X86_PREFIX_TOKENS and rest:
+        return _strip_x86_prefixes(rest)
+    return mnemonic
+
 # mnemonics whose first-operand memory access is a read, not a write
 _X86_MEM_READ_OPS = {"cmp", "test", "push"}
 
@@ -111,7 +125,10 @@ class Insn:
 def from_capstone_fast(ci: "capstone.CsInsn", arch: str) -> Insn:
     """Build an :class:`Insn` from a capstone instruction decoded with
     ``detail=False`` using mnemonic tables and op_str parsing."""
-    mnemonic = sys.intern(ci.mnemonic.lower())
+    mnemonic = ci.mnemonic.lower()
+    if arch in ("x86", "x86_64"):
+        mnemonic = _strip_x86_prefixes(mnemonic)
+    mnemonic = sys.intern(mnemonic)
     op_str = ci.op_str
     ins = Insn(
         addr=ci.address,
@@ -240,7 +257,10 @@ def _fast_generic(ins, mnemonic, op_str, jumps, calls, conds, rets) -> None:
 # ----------------------------------------------------------------------
 def from_capstone(ci: "capstone.CsInsn", arch: str) -> Insn:
     """Normalize a capstone instruction into :class:`Insn` (detail mode)."""
-    mnemonic = sys.intern(ci.mnemonic.lower())
+    mnemonic = ci.mnemonic.lower()
+    if arch in ("x86", "x86_64"):
+        mnemonic = _strip_x86_prefixes(mnemonic)
+    mnemonic = sys.intern(mnemonic)
     ins = Insn(
         addr=ci.address,
         size=ci.size,

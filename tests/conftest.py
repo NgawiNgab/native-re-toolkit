@@ -29,11 +29,45 @@ _TARGETS = {
 
 _STRIPPED = ["hello", "diff_v1", "diff_v2"]
 
+# IBT variants reproduce the Ubuntu default toolchain layout
+# (-fcf-protection=full + .plt.sec): notrack jump tables, endbr64 PLT
+# stubs. They exercise the same code paths that broke CI on
+# ubuntu-latest while the classic fixtures cover the Debian layout.
+_IBT_FLAGS = ["-fcf-protection=full", "-Wl,-z,ibtplt"]
+_IBT_TARGETS = {
+    "hello_ibt": ("hello.c", ["-O0", "-g0", "-fno-pie", "-no-pie",
+                              "-fstack-protector-strong", *_IBT_FLAGS]),
+    "hello_o2_ibt": ("hello.c", ["-O2", "-g0", "-fno-pie", "-no-pie",
+                                 "-fstack-protector-strong", *_IBT_FLAGS]),
+    "branchy_o2_ibt": ("branchy.c", ["-O2", "-g0", "-fno-pie", "-no-pie",
+                                     *_IBT_FLAGS]),
+}
+
+
+def _toolchain_supports_ibtplt() -> bool:
+    """Probe: older binutils rejects `-z ibtplt`; skip IBT fixtures then."""
+    probe_src = FIXTURE_SRC / "hello.c"
+    probe_out = FIXTURE_BUILD / ".probe_ibt"
+    try:
+        FIXTURE_BUILD.mkdir(parents=True, exist_ok=True)
+        r = subprocess.run(
+            [GCC, *_IBT_FLAGS, "-o", str(probe_out), str(probe_src)],
+            capture_output=True,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+    finally:
+        probe_out.unlink(missing_ok=True)
+
 
 def _build_all() -> dict[str, Path]:
     FIXTURE_BUILD.mkdir(parents=True, exist_ok=True)
     built: dict[str, Path] = {}
-    for name, (src, flags) in _TARGETS.items():
+    targets = dict(_TARGETS)
+    if _toolchain_supports_ibtplt():
+        targets.update(_IBT_TARGETS)
+    for name, (src, flags) in targets.items():
         out = FIXTURE_BUILD / name
         subprocess.run(
             [GCC, *flags, "-o", str(out), str(FIXTURE_SRC / src)],

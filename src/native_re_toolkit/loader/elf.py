@@ -274,6 +274,14 @@ class ELFBinary(Binary):
         Works by disassembling the PLT sections and following the
         RIP-relative indirect jumps to GOT slots, which we know from
         JUMP_SLOT relocations.
+
+        Stub layouts handled:
+          * classic ``.plt``:      ``jmp *GOT[rip]; push N; jmp ...``
+          * ``.plt.got``:          ``jmp *GOT[rip]`` (no lazy resolver)
+          * IBT ``.plt.sec``:      ``endbr64; jmp *GOT[rip]; nopw``
+        For the IBT form the stub *entry* is the endbr64 four bytes ahead
+        of the jump, so the recorded address is rewound accordingly --
+        callers branch to the endbr64, not to the jmp.
         """
         if not self.got_imports or self.arch not in ("x86", "x86_64"):
             return
@@ -286,6 +294,7 @@ class ELFBinary(Binary):
             md.detail = True
         except Exception:
             return
+        _ENDBR = (b"\xf3\x0f\x1e\xfa", b"\xf3\x0f\x1e\xfb")  # endbr64 / endbr32
         for sec in self.sections:
             if sec.name not in (".plt", ".plt.sec", ".plt.got", ".iplt"):
                 continue
@@ -302,8 +311,13 @@ class ELFBinary(Binary):
                         continue
                     # RIP register ids: 41 = RIP, 16 = EIP in capstone5/x86
                     target = insn.address + insn.size + op.mem.disp
-                    if target in self.got_imports:
-                        self.plt_imports[insn.address] = self.got_imports[target]
+                    if target not in self.got_imports:
+                        continue
+                    stub = insn.address
+                    off = insn.address - sec.vaddr
+                    if off >= 4 and bytes(sec.data[off - 4 : off]) in _ENDBR:
+                        stub -= 4  # IBT .plt.sec stub: entry is the endbr
+                    self.plt_imports[stub] = self.got_imports[target]
             except Exception:
                 continue
 

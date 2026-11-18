@@ -168,6 +168,7 @@ class Disassembler:
         max_jump_table: int = 1024,
         is_noreturn: Optional[Callable[[int], bool]] = None,
         pool: Optional[dict[int, Insn]] = None,
+        table_ok: Optional[Callable[[int], bool]] = None,
     ) -> "RecursiveResult":
         """Recursive-descent disassembly starting at *entry*.
 
@@ -178,6 +179,10 @@ class Disassembler:
         When *pool* (an address -> Insn map covering the executable
         sections, e.g. from :meth:`build_pool`) is given, instructions
         are looked up there instead of decoding on the fly.
+
+        *table_ok* optionally vetoes jump-table base addresses (e.g. to
+        require a non-writable section); without it any address with two
+        or more in-code pointers is accepted.
         """
         insns: dict[int, Insn] = {}
         call_targets: set[int] = set()
@@ -237,7 +242,8 @@ class Disassembler:
                         work.append(ins.target)
                     elif ins.indirect and ins.mem_ref is not None:
                         targets = self._read_jump_table(
-                            ins.mem_ref, read_va, in_code, ptr_size, max_jump_table
+                            ins.mem_ref, read_va, in_code, ptr_size, max_jump_table,
+                            table_ok,
                         )
                         if targets:
                             jump_tables[ins.addr] = targets
@@ -264,8 +270,16 @@ class Disassembler:
         in_code: Callable[[int], bool],
         ptr_size: int,
         max_entries: int,
+        table_ok: Optional[Callable[[int], bool]] = None,
     ) -> list[int]:
-        """Read an absolute-address jump table (non-PIC switch tables)."""
+        """Read an absolute-address jump table (non-PIC switch tables).
+
+        A lone in-code pointer is *not* a table -- it is a PLT stub or
+        an indirect thunk through a GOT slot / function pointer -- so at
+        least two consecutive entries are required.
+        """
+        if table_ok is not None and not table_ok(table_va):
+            return []
         targets: list[int] = []
         raw = read_va(table_va, ptr_size * max_entries)
         if len(raw) < ptr_size:
@@ -276,6 +290,8 @@ class Disassembler:
                 targets.append(val)
             else:
                 break
+        if len(targets) < 2:
+            return []
         return targets
 
 

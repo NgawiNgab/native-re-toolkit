@@ -161,7 +161,8 @@ def _disasm_function(b: Binary, va: int, args) -> int:
         sec = b.section_at(x)
         return sec is not None and sec.executable
 
-    fn = build_function(dis, b.read_va, in_code, va, b.name_for_address(va) or "")
+    fn = build_function(dis, b.read_va, in_code, va, b.name_for_address(va) or "",
+                        table_ok=b.jump_table_ok)
     if args.json:
         _json_out({
             "function": {"start": fn.start, "name": fn.name,
@@ -241,7 +242,8 @@ def cmd_cfg(args) -> int:
         sec = b.section_at(x)
         return sec is not None and sec.executable
 
-    fn = build_function(dis, b.read_va, in_code, va, b.name_for_address(va) or "")
+    fn = build_function(dis, b.read_va, in_code, va, b.name_for_address(va) or "",
+                        table_ok=b.jump_table_ok)
     if args.dot:
         print(fn.to_dot())
         return 0

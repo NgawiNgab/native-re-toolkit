@@ -38,9 +38,13 @@ Being honest about what static analysis can and cannot do. Entries marked
   boundaries (95% coverage) and discovery falls back to streaming
   decode below that, but heavily obfuscated code may still confuse it.
 - **Jump tables**: recovered for the absolute-addressing form
-  (`jmp [reg*8 + table]`, non-PIE). PIC/PIE offset tables
+  (`jmp [reg*8 + table]`, non-PIE; the IBT `notrack` variant is
+  handled). The table must live in a non-writable, non-executable
+  section and have at least two entries — single GOT/function pointers
+  are deliberately not treated as tables. PIC/PIE offset tables
   (`movsxd`+`add`) are not yet resolved — those switch cases appear as
-  an unresolved indirect jump. *(tested for the absolute form)*
+  an unresolved indirect jump. *(tested for the absolute form, with and
+  without IBT)*
 - **Indirect calls** (vtables, callbacks, `call rax`) have no target
   xref — inherent to static analysis.
 - Obfuscated control flow (opaque predicates, self-modifying code,
