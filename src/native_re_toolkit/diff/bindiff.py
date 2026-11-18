@@ -151,12 +151,13 @@ def diff_functions(
             sim = _similarity(old_unmatched[oa], new_unmatched[na])
             pop_pair(oa, na, "name", sim)
 
-    # 2. match by identical address (same-layout stripped builds)
+    # 2. match by identical address (same-layout stripped builds).
+    # Address equality is strong positional evidence, so the base
+    # threshold applies (not the stricter small-function one).
     for addr in sorted(set(old_unmatched) & set(new_unmatched)):
         o_fn, n_fn = old_unmatched[addr], new_unmatched[addr]
         sim = _similarity(o_fn, n_fn)
-        # accept address match only when reasonably similar
-        if sim >= _effective_threshold(o_fn, n_fn, fuzzy_threshold):
+        if sim >= fuzzy_threshold:
             pop_pair(addr, addr, "address", sim)
 
     # 3. exact mnemonic-hash match

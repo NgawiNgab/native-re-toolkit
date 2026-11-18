@@ -64,6 +64,19 @@ def test_stripped_address_matching(fixtures):
     assert "address" in methods or "hash" in methods
 
 
+def test_stripped_small_change_matched_by_address(fixtures):
+    """Same-address small functions that changed slightly must pair as
+    'changed' via address matching, not split into added+removed."""
+    old = open_binary(str(fixtures["diff_v1_stripped"]))
+    new = open_binary(str(fixtures["diff_v2_stripped"]))
+    rep = diff_binaries(old, new)
+    addr_pairs = {p.match_method for p in rep.changed}
+    assert "address" in addr_pairs, (
+        "expected an address-matched 'changed' pair for the small edit; "
+        f"got changed={[ (p.old.start, p.similarity) for p in rep.changed ]}"
+    )
+
+
 def test_diff_report_serialization(fixtures):
     old = open_binary(str(fixtures["diff_v1"]))
     new = open_binary(str(fixtures["diff_v2"]))
