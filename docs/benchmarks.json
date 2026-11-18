@@ -1,0 +1,44 @@
+[
+  {
+    "path": "tests/fixtures/build/hello",
+    "time_s_best": 0.012769082999966486,
+    "time_s_median": 0.012883055000202148,
+    "peak_rss_mb": 32.55078125,
+    "format": "elf",
+    "arch": "x86_64",
+    "size_bytes": 16016,
+    "functions": 15,
+    "heuristic_functions": 0,
+    "strings": 12,
+    "xrefs": 29,
+    "instructions": 172
+  },
+  {
+    "path": "tests/fixtures/build/branchy_o2",
+    "time_s_best": 0.011756771000136723,
+    "time_s_median": 0.012177239000038753,
+    "peak_rss_mb": 33.125,
+    "format": "elf",
+    "arch": "x86_64",
+    "size_bytes": 15984,
+    "functions": 15,
+    "heuristic_functions": 0,
+    "strings": 9,
+    "xrefs": 37,
+    "instructions": 442
+  },
+  {
+    "path": "/usr/bin/python3.11",
+    "time_s_best": 7.876585665999983,
+    "time_s_median": 7.990592667000101,
+    "peak_rss_mb": 869.7265625,
+    "format": "elf",
+    "arch": "x86_64",
+    "size_bytes": 6834424,
+    "functions": 3292,
+    "heuristic_functions": 598,
+    "strings": 15761,
+    "xrefs": 72344,
+    "instructions": 567617
+  }
+]

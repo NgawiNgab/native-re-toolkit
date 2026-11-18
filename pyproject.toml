@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "native-re-toolkit"
+description = "Static analysis toolkit for native binaries (ELF/PE/Mach-O): disassembly, CFG, cross-references, strings, signatures and diffing"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "NgawiNgab" }]
+keywords = ["reverse-engineering", "binary-analysis", "disassembly", "elf", "pe", "security"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+    "Topic :: Software Development :: Disassemblers",
+]
+dynamic = ["version"]
+dependencies = [
+    "capstone>=5.0",
+    "pyelftools>=0.29",
+    "pefile>=2023.2.7",
+]
+
+[project.optional-dependencies]
+yara = ["yara-python>=4.3"]
+dev = ["pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/NgawiNgab/native-re-toolkit"
+Repository = "https://github.com/NgawiNgab/native-re-toolkit"
+
+[project.scripts]
+nrt = "native_re_toolkit.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+native_re_toolkit = ["data/*.json"]
+
+[tool.setuptools.dynamic]
+version = { attr = "native_re_toolkit.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

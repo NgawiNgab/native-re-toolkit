@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+
+# Test artifacts
+.pytest_cache/
+tests/fixtures/build/
+
+# Release artifacts
+*.pyz
+release/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
